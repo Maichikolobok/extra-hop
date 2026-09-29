@@ -670,7 +670,10 @@ local API_TOKEN = CFG_EXT.ApiToken or ""
 
 local HttpService = game:GetService("HttpService")
 local POOL_TARGET = CFG_EXT.PoolTarget or 500
-local SERVER_API = "https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+local SERVER_API = "https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&excludeFullGames=true&limit=100"
+-- Сколько игроков должно быть на сервере. Было 2: но список идёт от самых пустых, и первые страницы
+-- (сотни серверов) — сплошь по 1 игроку, так что фетчер не находил ни одного подходящего.
+local MIN_PLAYERS = tonumber(CFG_EXT.MinPlayers) or 1
 local REFRESH_INTERVAL = CFG_EXT.RefreshInterval or 60
 
 local function httpRequest(options)
@@ -1099,7 +1102,7 @@ local function fillPool()
         local batch = {}
         for _, server in ipairs(result.data) do
             local id = tostring(server.id)
-            if id ~= game.JobId and server.playing and server.maxPlayers and (server.maxPlayers - server.playing) >= 2 and server.playing >= 2 then
+            if id ~= game.JobId and server.playing and server.maxPlayers and (server.maxPlayers - server.playing) >= 2 and server.playing >= MIN_PLAYERS then
                 table.insert(batch, id)
             end
         end
@@ -1142,7 +1145,7 @@ local function fillPool()
     elseif pages == 0 then
         setStatus("Roblox не отдал список серверов — повтор через минуту", THEME.accentAmber)
     elseif sent == 0 then
-        setStatus("Подходящих серверов нет (нужно 2+ игрока и 2+ свободных места)", THEME.accentAmber)
+        setStatus("Подходящих серверов нет (нужно " .. MIN_PLAYERS .. "+ игрок. и 2+ свободных места)", THEME.accentAmber)
     else
         setStatus("Завершено +" .. added, THEME.accentGreen)
     end
