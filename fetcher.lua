@@ -690,7 +690,8 @@ local function httpRequest(options)
     end
 end
 
--- Запрос к API сайта. Возвращает разобранный JSON (таблицу) или nil при ошибке сети/сервера.
+-- Запрос к API сайта. Возвращает разобранный JSON (таблицу) или nil и причину —
+-- чтобы в окне было видно, ПОЧЕМУ сайт не принял серверы, а не просто «+0».
 local function apiCall(method, path, body, timeout)
     local ok, resp = pcall(function()
         return httpRequest({
@@ -704,16 +705,27 @@ local function apiCall(method, path, body, timeout)
             Body = body and HttpService:JSONEncode(body) or nil,
         })
     end)
-    if not ok or not resp or not resp.Body then return nil end
+    if not ok or not resp then return nil, "сайт не отвечает" end
     local code = tonumber(resp.StatusCode) or 0
-    if code < 200 or code >= 300 then return nil end
+    if code < 200 or code >= 300 then
+        local msg = nil
+        pcall(function() msg = HttpService:JSONDecode(resp.Body).message end)
+        local hint = (code == 401 and "сайт не принял API-ключ")
+            or (code == 403 and "подписка неактивна")
+            or (code == 429 and "слишком много запросов")
+            or (code >= 500 and "ошибка на сайте")
+            or (code == 0 and "нет соединения")
+            or "ошибка запроса"
+        return nil, code .. " — " .. hint .. (type(msg) == "string" and msg ~= "" and (" (" .. msg .. ")") or "")
+    end
     local decOk, data = pcall(function() return HttpService:JSONDecode(resp.Body) end)
-    return decOk and data or nil
+    if not decOk or type(data) ~= "table" then return nil, code .. " — сайт ответил не JSON" end
+    return data
 end
 
 local function getPoolSize()
-    local r = apiCall("GET", "/pool/size?group=" .. GROUP, nil, 2)
-    return r and tonumber(r.size) or 0
+    local r, err = apiCall("GET", "/pool/size?group=" .. GROUP, nil, 2)
+    return r and tonumber(r.size) or 0, err
 end
 
 local function fetchServerPage(cursor)
@@ -1076,6 +1088,8 @@ local function fillPool()
     local cursor = ""
     local pages = 0
     local added = 0
+    local sent = 0       -- сколько подходящих серверов отправили на сайт
+    local addErr = nil   -- почему сайт их не принял (последняя ошибка pool/add)
 
     while pages < 10 do
         if getPoolSize() >= POOL_TARGET then break end
@@ -1092,9 +1106,12 @@ local function fillPool()
 
         if #batch > 0 then
             -- сервер добавит в пул и сам продлит его жизнь на час
-            local r = apiCall("POST", "/pool/add", { group = GROUP, ids = batch }, 3)
+            sent = sent + #batch
+            local r, err = apiCall("POST", "/pool/add", { group = GROUP, ids = batch }, 3)
             if r then
                 added = added + (tonumber(r.added) or 0)
+            else
+                addErr = err
             end
         end
 
@@ -1110,13 +1127,25 @@ local function fillPool()
     totalAdded = totalAdded + added
     cycles = cycles + 1
 
-    local currentPool = getPoolSize()
+    local currentPool, sizeErr = getPoolSize()
     local finalProg = math.clamp(currentPool / POOL_TARGET, 0, 1)
     BarFill.Size = UDim2.new(finalProg, 0, 1, 0)
-    PoolCountLabel.Text = "Пул серверов: " .. currentPool .. " / " .. POOL_TARGET
-    DetailLabel.Text = "Стр: " .. pages .. "  •  Добавлено: +" .. added .. "  •  Цикл: " .. cycles
+    PoolCountLabel.Text = "Пул серверов: " .. (sizeErr and "?" or tostring(currentPool)) .. " / " .. POOL_TARGET
+    DetailLabel.Text = "Стр: " .. pages .. "  •  Отправлено: " .. sent .. "  •  Добавлено: +" .. added .. "  •  Цикл: " .. cycles
     TotalStatsLabel.Text = "Всего залито: " .. totalAdded .. " серверов  •  Фильтр: 2+ слота"
-    setStatus("Завершено +" .. added, THEME.accentGreen)
+    if addErr then
+        setStatus("Сайт не принял серверы: " .. addErr, THEME.accentRed)
+        warn("[Extra Hop Fetcher] pool/add: " .. addErr)
+    elseif sizeErr then
+        setStatus("Размер пула не прочитать: " .. sizeErr, THEME.accentRed)
+        warn("[Extra Hop Fetcher] pool/size: " .. sizeErr)
+    elseif pages == 0 then
+        setStatus("Roblox не отдал список серверов — повтор через минуту", THEME.accentAmber)
+    elseif sent == 0 then
+        setStatus("Подходящих серверов нет (нужно 2+ игрока и 2+ свободных места)", THEME.accentAmber)
+    else
+        setStatus("Завершено +" .. added, THEME.accentGreen)
+    end
 end
 
 task.spawn(function()
