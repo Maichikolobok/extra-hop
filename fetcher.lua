@@ -84,10 +84,29 @@ print("[Extra Hop v13.0] Конфигурация успешно загруже�
 -- Ключ API = и пропуск на сайт, и то, чья это группа: сайт по нему решает, в чью очередь класть
 -- находки, из какого пула серверов брать и чьи (и каких друзей) задачи отдавать мейну.
 do
-    local env = (getgenv and getgenv()) or (getfenv and getfenv()) or _G
+    -- Куда попадёт строка лоадера  API = "..." , зависит от экзекутора и от Luarmor: у одних — в getgenv(),
+    -- у других — в окружение самого лоадера, которое loadstring передаёт скрипту. Раньше искали только
+    -- в getgenv()/_G, и во втором случае скрипт писал «Нет API-ключа», хотя ключ в лоадере был.
+    -- Теперь: как обычная глобальная переменная этого скрипта → getgenv/_G/shared → окружения по стеку вызовов.
+    local direct = { API = API, ExtraWebhook = ExtraWebhook, ExtraConfig = ExtraConfig, DELAY = DELAY }
     local function get(name)
-        local v = env[name]
-        if v == nil then v = rawget(_G, name) end
+        local v = direct[name]
+        local function try(t)
+            if v ~= nil or type(t) ~= "table" then return end
+            local ok, r = pcall(function() return t[name] end)
+            if ok and r ~= nil then v = r end
+        end
+        if getgenv then pcall(function() try(getgenv()) end) end
+        try(_G)
+        try(shared)
+        if v == nil and getfenv then
+            for lvl = 0, 30 do
+                local ok, e = pcall(getfenv, lvl)
+                if not ok then break end -- стек кончился
+                try(e)
+                if v ~= nil then break end
+            end
+        end
         return v
     end
     local cfg = _G.ExtraHopConfig
