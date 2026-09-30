@@ -526,7 +526,7 @@ end
 -- =====================================================================
 -- FETCHER (fetcher.lua)
 -- =====================================================================
---// Extra Hop v13.2 — FETCHER | Minimalist Stealth Dark Server Pooler
+--// Extra Hop v13.4 — FETCHER | Minimalist Stealth Dark Server Pooler
 -- =========================================================================
 -- 1. РАННИЙ СТОРОЖЕВОЙ ТАЙМЕР (WATCHDOG) ОТ ОШИБОК 279 / 267 / DISCONNECT
 -- =========================================================================
@@ -695,7 +695,7 @@ end
 
 -- Запрос к API сайта. Возвращает разобранный JSON (таблицу) или nil и причину —
 -- чтобы в окне было видно, ПОЧЕМУ сайт не принял серверы, а не просто «+0».
-local function apiCall(method, path, body, timeout)
+local function apiCallRaw(method, path, body, timeout)
     local ok, resp = pcall(function()
         return httpRequest({
             Url = API_URL .. path,
@@ -724,6 +724,21 @@ local function apiCall(method, path, body, timeout)
     local decOk, data = pcall(function() return HttpService:JSONDecode(resp.Body) end)
     if not decOk or type(data) ~= "table" then return nil, code .. " — сайт ответил не JSON" end
     return data
+end
+
+-- Жёсткий лимит времени: экзекуторы часто не соблюдают Timeout, и если сайт не ответил,
+-- запрос висел бесконечно. Ждём не дольше timeout + 2 с, дальше — «сайт не отвечает».
+local function apiCall(method, path, body, timeout)
+    local done, r1, r2 = false, nil, nil
+    task.spawn(function()
+        local ok, a, b = pcall(apiCallRaw, method, path, body, timeout)
+        if ok then r1, r2 = a, b else r2 = "ошибка запроса: " .. tostring(a) end
+        done = true
+    end)
+    local deadline = os.clock() + (timeout or 3.5) + 2
+    while not done and os.clock() < deadline do task.wait(0.1) end
+    if not done then return nil, "сайт не отвечает (таймаут)" end
+    return r1, r2
 end
 
 local function getPoolSize()
@@ -845,7 +860,14 @@ Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 
 local MainStroke = Instance.new("UIStroke", MainFrame)
 MainStroke.Color = THEME.border
-MainStroke.Thickness = 1.2
+MainStroke.Thickness = 1.3
+local fGrad = Instance.new("UIGradient", MainStroke)
+fGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(56, 189, 248)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(129, 140, 248)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(36, 43, 62)),
+})
+fGrad.Rotation = 45
 
 -- Dragging
 local isDragging = false
@@ -1181,4 +1203,5 @@ task.spawn(function()
     end
 end)
 
-print("[Extra Hop v13.2] FETCHER | Группа: " .. GROUP .. " | Игрок: " .. LocalPlayer.Name)
+print("[Extra Hop v13.4] FETCHER | Группа: " .. GROUP .. " | Игрок: " .. LocalPlayer.Name)
+
